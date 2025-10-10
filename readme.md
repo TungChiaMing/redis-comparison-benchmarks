@@ -390,3 +390,10 @@ In addition to the memtier_benchmark results above, conducted a specialized PHP-
 - **KeyDB:** Support ~1,405 light pages/sec or ~281 heavy pages/sec  
 - **Dragonfly:** Support ~1,151 light pages/sec or ~230 heavy pages/sec
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=centminmod/redis-comparison-benchmarks&type=Date)](https://www.star-history.com/#centminmod/redis-comparison-benchmarks&Date)
+
+## Stats
+
+![Alt](https://repobeats.axiom.co/api/embed/bce38d63e7154ea17a63c2dea4c3c878740c3ed2.svg "Repobeats analytics image")
