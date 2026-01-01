@@ -1,6 +1,29 @@
-FROM docker.dragonflydb.io/dragonflydb/dragonfly:latest
+#FROM docker.dragonflydb.io/dragonflydb/dragonfly:latest
 
-# Expose the default port
+FROM ubuntu:22.04
+
+RUN apt update && apt install -y \
+    ninja-build \
+    libunwind-dev \
+    libboost-context-dev \
+    libssl-dev \
+    autoconf-archive \
+    libtool \
+    cmake \
+    g++ \
+    bison \
+    zlib1g-dev \
+    patch \
+    git
+
+WORKDIR /opt/dragonfly
+
+COPY dragonfly-main /opt/dragonfly
+
+RUN ./helio/blaze.sh -release \
+ && cd build-opt \
+ && ninja dragonfly
+
 EXPOSE 6381
 
-CMD [ "dragonfly", "--proactor_threads=2" ]
+# CMD [ "dragonfly", "--proactor_threads=2" ]
