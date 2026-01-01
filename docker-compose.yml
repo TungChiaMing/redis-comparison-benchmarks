@@ -10,20 +10,19 @@ services:
     cpuset: "0-3"
     ulimits:
       memlock: -1
-    restart: unless-stopped
 
-  keydb:
-    build:
-      context: .
-      dockerfile: Dockerfile-keydb
-    image: keydb:latest
-    container_name: keydb
-    ports:
-      - "6380:6379"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
-    restart: unless-stopped
+  # keydb:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile-keydb
+  #   image: keydb:latest
+  #   container_name: keydb
+  #   ports:
+  #     - "6380:6379"
+  #   cpuset: "0-3"
+  #   ulimits:
+  #     memlock: -1
+  #   restart: unless-stopped
 
   dragonfly:
     build:
@@ -36,69 +35,74 @@ services:
     cpuset: "0-3"
     ulimits:
       memlock: -1
-    restart: unless-stopped
+    command: >
+      bash -c "
+      cd /opt/dragonfly/build-opt &&
+      exec ./dragonfly
+        --port 6379
+        --alsologtostderr
+      "
+  # valkey:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile-valkey
+  #   image: valkey:latest
+  #   container_name: valkey
+  #   ports:
+  #     - "6382:6379"
+  #   cpuset: "0-3"
+  #   ulimits:
+  #     memlock: -1
+  #   restart: unless-stopped
 
-  valkey:
-    build:
-      context: .
-      dockerfile: Dockerfile-valkey
-    image: valkey:latest
-    container_name: valkey
-    ports:
-      - "6382:6379"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
-    restart: unless-stopped
+  # redis-tls:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile-redis-tls
+  #   image: redis-tls:latest
+  #   container_name: redis-tls
+  #   ports:
+  #     - "6390:6390"
+  #   cpuset: "0-3"
+  #   ulimits:
+  #     memlock: -1
+  #   restart: unless-stopped
 
-  redis-tls:
-    build:
-      context: .
-      dockerfile: Dockerfile-redis-tls
-    image: redis-tls:latest
-    container_name: redis-tls
-    ports:
-      - "6390:6390"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
-    restart: unless-stopped
+  # keydb-tls:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile-keydb-tls
+  #   image: keydb-tls:latest
+  #   container_name: keydb-tls
+  #   ports:
+  #     - "6391:6391"
+  #   cpuset: "0-3"
+  #   ulimits:
+  #     memlock: -1
+  #   restart: unless-stopped
 
-  keydb-tls:
-    build:
-      context: .
-      dockerfile: Dockerfile-keydb-tls
-    image: keydb-tls:latest
-    container_name: keydb-tls
-    ports:
-      - "6391:6391"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
-    restart: unless-stopped
+  # dragonfly-tls:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile-dragonfly-tls-nopass
+  #   image: dragonfly-tls:latest
+  #   container_name: dragonfly-tls
+  #   ports:
+  #     - "6392:6392"
+  #   cpuset: "0-3"
+  #   ulimits:
+  #     memlock: -1
+  #   restart: unless-stopped
 
-  dragonfly-tls:
-    build:
-      context: .
-      dockerfile: Dockerfile-dragonfly-tls-nopass
-    image: dragonfly-tls:latest
-    container_name: dragonfly-tls
-    ports:
-      - "6392:6392"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
-    restart: unless-stopped
-
-  valkey-tls:
-    build:
-      context: .
-      dockerfile: Dockerfile-valkey-tls
-    image: valkey-tls:latest
-    container_name: valkey-tls
-    ports:
-      - "6393:6393"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
-    restart: unless-stopped
+  # valkey-tls:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile-valkey-tls
+  #   image: valkey-tls:latest
+  #   container_name: valkey-tls
+  #   ports:
+  #     - "6393:6393"
+  #   cpuset: "0-3"
+  #   ulimits:
+  #     memlock: -1
+  #   restart: unless-stopped

@@ -24,6 +24,6 @@ RUN ./helio/blaze.sh -release \
  && cd build-opt \
  && ninja dragonfly
 
-EXPOSE 6381
+EXPOSE 6379
 
 # CMD [ "dragonfly", "--proactor_threads=2" ]

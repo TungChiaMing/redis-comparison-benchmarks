@@ -513,9 +513,9 @@ run_memtier_benchmark() {
     --key-pattern=G:G --key-minimum=1 --key-maximum=1000000 \
     --key-median=500000 --key-stddev=166667 $tls_opts"
 
-  if [ -n "$cpu_affinity" ]; then
-    cmd="taskset -c $cpu_affinity $cmd"
-  fi
+#   if [ -n "$cpu_affinity" ]; then
+#     cmd="taskset -c $cpu_affinity $cmd"
+#   fi
 
   eval "$cmd | tee $output_file" || echo "Benchmark failed: $output_file"
 }
@@ -594,49 +594,51 @@ run_benchmarks() {
 # Process results (matching GitHub workflow)
 process_results() {
     echo "==== Processing Results ===="
-    
-    # Convert to markdown
-    for db in redis keydb dragonfly valkey; do
+
+    # Convert to markdown (quick benchmarks)
+    for db in dragonfly; do
         for threads in 1 2 4 8; do
-            if [ -f "./benchmarklogs/${db}_benchmarks_${threads}threads.txt" ]; then
-                python scripts/parse_memtier_to_md.py \
-                    "./benchmarklogs/${db}_benchmarks_${threads}threads.txt" \
-                    "$(echo ${db^}) $threads Thread$([ $threads -gt 1 ] && echo 's')"
+            # Non-TLS quick benchmarks
+            if [ -f "./benchmarklogs/${db}_quick_${threads}threads.txt" ]; then
+                python3 scripts/parse_memtier_to_md.py \
+                    "./benchmarklogs/${db}_quick_${threads}threads.txt" \
+                    "$(echo "$db" | awk '{print toupper(substr($0,1,1)) substr($0,2)}') $threads Thread$([ $threads -gt 1 ] && echo 's')"
+                    # "$(echo ${db^}) Quick $threads Thread$([ $threads -gt 1 ] && echo 's')"
             fi
             
-            # TLS results
-            if [ -f "./benchmarklogs/${db}_benchmarks_${threads}threads_tls.txt" ]; then
-                python scripts/parse_memtier_to_md.py \
-                    "./benchmarklogs/${db}_benchmarks_${threads}threads_tls.txt" \
-                    "$(echo ${db^}) TLS $threads Thread$([ $threads -gt 1 ] && echo 's')"
+            # TLS quick benchmarks
+            if [ -f "./benchmarklogs/${db}_quick_${threads}threads_tls.txt" ]; then
+                python3 scripts/parse_memtier_to_md.py \
+                    "./benchmarklogs/${db}_quick_${threads}threads_tls.txt" \
+                    "$(echo ${db^}) Quick TLS $threads Thread$([ $threads -gt 1 ] && echo 's')"
             fi
         done
     done
-    
-    # Combine results
-    for db in redis keydb dragonfly valkey; do
+
+    # Combine results (quick)
+    for db in dragonfly; do
         files=""
         for threads in 1 2 4 8; do
-            if [ -f "./benchmarklogs/${db}_benchmarks_${threads}threads.md" ]; then
-                files="$files ./benchmarklogs/${db}_benchmarks_${threads}threads.md"
+            if [ -f "./benchmarklogs/${db}_quick_${threads}threads.md" ]; then
+                files="$files ./benchmarklogs/${db}_quick_${threads}threads.md"
             fi
         done
         if [ ! -z "$files" ]; then
-            python scripts/combine_markdown_results.py "$files" "$db"
+            python3 scripts/combine_markdown_results.py "$files" "${db}-quick"
         fi
         
-        # TLS results
+        # TLS quick results
         tls_files=""
         for threads in 1 2 4 8; do
-            if [ -f "./benchmarklogs/${db}_benchmarks_${threads}threads_tls.md" ]; then
-                tls_files="$tls_files ./benchmarklogs/${db}_benchmarks_${threads}threads_tls.md"
+            if [ -f "./benchmarklogs/${db}_quick_${threads}threads_tls.md" ]; then
+                tls_files="$tls_files ./benchmarklogs/${db}_quick_${threads}threads_tls.md"
             fi
         done
         if [ ! -z "$tls_files" ]; then
-            python scripts/combine_markdown_results.py "$tls_files" "${db}-tls"
+            python3 scripts/combine_markdown_results.py "$tls_files" "${db}-quick-tls"
         fi
     done
-    
+
     # Create final combined files
     cat ./benchmarklogs/combined_*_results.md > ./combined_all_results.md 2>/dev/null || true
     cat ./benchmarklogs/combined_*-tls_results.md > ./combined_all_results_tls.md 2>/dev/null || true
@@ -648,13 +650,13 @@ generate_charts() {
     
     if command -v python3 &> /dev/null && python3 -c "import matplotlib" 2>/dev/null; then
         if [ -f "./combined_all_results.md" ]; then
-            python scripts/latency-charts.py combined_all_results.md nonTLS || echo "Chart generation failed"
-            python scripts/opssec-charts.py combined_all_results.md nonTLS || echo "Chart generation failed"
+            python3 scripts/latency-charts.py combined_all_results.md nonTLS || echo "Chart generation failed"
+            python3 scripts/opssec-charts.py combined_all_results.md nonTLS || echo "Chart generation failed"
         fi
         
         if [ -f "./combined_all_results_tls.md" ]; then
-            python scripts/latency-charts.py combined_all_results_tls.md TLS || echo "TLS chart generation failed"
-            python scripts/opssec-charts.py combined_all_results_tls.md TLS || echo "TLS chart generation failed"
+            python3 scripts/latency-charts.py combined_all_results_tls.md TLS || echo "TLS chart generation failed"
+            python3 scripts/opssec-charts.py combined_all_results_tls.md TLS || echo "TLS chart generation failed"
         fi
     else
         echo "Python3 or matplotlib not available, skipping chart generation"
@@ -1021,6 +1023,34 @@ container_shell() {
     fi
 }
 
+# Quick benchmark function (Dragonfly only) - Bash 3 compatible
+quick_dragonfly_benchmark() {
+    echo "==== Quick Benchmark: Dragonfly only ===="
+
+    # Check if dragonfly container is running
+    if ! check_container_status "dragonfly"; then
+        echo "❌ Dragonfly container is not running. Start it first with: $0 start"
+        return 1
+    fi
+
+    mkdir -p benchmarklogs
+
+    # Threads and CPU affinities
+    threads_list=(1 2 4 6 8)
+    cpu_affinities=("0" "0,1" "0-3" "0-5" "0-7")
+
+    for i in "${!threads_list[@]}"; do
+        threads=${threads_list[$i]}
+        cpu_affinity=${cpu_affinities[$i]}
+        logfile="./benchmarklogs/dragonfly_quick_${threads}threads.txt"
+        echo "Running Dragonfly benchmark with $threads threads (cpu_affinity=${cpu_affinity}) -> $logfile"
+
+        run_memtier_benchmark "127.0.0.1" "$DRAGONFLY_HOST_PORT" "$threads" "$logfile" "" "$cpu_affinity"
+    done
+
+    echo "✅ Dragonfly quick benchmark completed. Results in ./benchmarklogs/"
+}
+
 # Quick benchmark function (subset of full benchmarks)
 quick_benchmark() {
     echo "==== Quick Benchmark (1 & 2 threads only) ===="
@@ -1099,32 +1129,42 @@ case "${1:-}" in
         exit 0
         ;;
     "quick")
-        quick_benchmark
+        quick_dragonfly_benchmark
+        exit 0
+        ;;
+    "process_results")
+        process_results
+        exit 0
+        ;;
+    "generate_charts")
+        generate_charts
         exit 0
         ;;
     "help"|"-h"|"--help")
         echo "Usage: $0 [command] [options]"
         echo ""
         echo "Commands:"
-        echo "  (none)     Run full benchmark suite"
-        echo "  start      Start all containers (builds if needed)"
-        echo "  stop       Stop all containers"
-        echo "  restart    Restart all containers"
-        echo "  build      Build all container images"
-        echo "  status     Show container status and connection info"
-        echo "  logs       Show logs for all containers"
-        echo "  logs <svc> Show logs for specific service"
-        echo "  shell <svc> Open shell in specific container"
-        echo "  quick      Run quick benchmark (1-2 threads only)"
-        echo "  cleanup    Manually cleanup containers and images"
-        echo "  help       Show this help message"
+        echo "  (none)             Run full benchmark suite"
+        echo "  start              Start all containers (builds if needed)"
+        echo "  stop               Stop all containers"
+        echo "  restart            Restart all containers"
+        echo "  build              Build all container images"
+        echo "  status             Show container status and connection info"
+        echo "  logs               Show logs for all containers"
+        echo "  logs <svc>         Show logs for specific service"
+        echo "  shell <svc>        Open shell in specific container"
+        echo "  quick              Run quick benchmark (Dragonfly only)"
+        echo "  process_results    Convert benchmark logs to markdown and combine results"
+        echo "  generate_charts    Generate charts from combined benchmark results"
+        echo "  cleanup            Manually cleanup containers and images"
+        echo "  help               Show this help message"
         echo ""
         echo "Services: redis, keydb, dragonfly, valkey, redis-tls, keydb-tls, dragonfly-tls, valkey-tls"
         echo ""
         echo "Configuration variables:"
         echo "  CLEANUP=y|n                    Cleanup containers after benchmarks (default: n)"
-        echo "  USE_DOCKER_COMPOSE=true|false Use docker-compose or individual containers"
-        echo "  MEMTIER_*_TLS=y|n             Enable/disable TLS testing for each database"
+        echo "  USE_DOCKER_COMPOSE=true|false  Use docker-compose or individual containers"
+        echo "  MEMTIER_*_TLS=y|n              Enable/disable TLS testing for each database"
         echo ""
         echo "Port Configuration:"
         echo "  Redis: $REDIS_HOST_PORT, KeyDB: $KEYDB_HOST_PORT, Dragonfly: $DRAGONFLY_HOST_PORT, Valkey: $VALKEY_HOST_PORT"
@@ -1137,6 +1177,8 @@ case "${1:-}" in
         echo "  $0 logs redis         # Show Redis container logs"
         echo "  $0 shell keydb        # Open shell in KeyDB container"
         echo "  $0 quick              # Run quick benchmark"
+        echo "  $0 process_results    # Process logs into markdown"
+        echo "  $0 generate_charts    # Generate charts from markdown results"
         echo "  $0 restart            # Restart all containers"
         echo "  $0 stop               # Stop all containers"
         echo "  CLEANUP=y $0          # Run benchmarks, cleanup afterwards"
