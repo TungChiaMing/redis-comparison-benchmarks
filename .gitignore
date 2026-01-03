@@ -1,4 +1,11 @@
 dragonfly-main
 memtier_benchmark-master
+memtier_benchmark
 .DS_Store
 *-TLS-.*.png
+.env
+*.crt
+*.key
+*.csr
+*.pem
+*.srl

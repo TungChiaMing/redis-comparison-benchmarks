@@ -4,7 +4,21 @@ MEMTIER_REDIS_TLS='y'
 MEMTIER_DRAGONFLY_TLS='y'
 CLEANUP='n' # Set to 'y' to cleanup containers after benchmarks, 'n' to keep them running
 USE_DOCKER_COMPOSE=true
-CPUS=$(nproc)
+
+# Detect CPU count based on OS
+if [[ "$(uname -s)" == "Linux" ]]; then
+    CPUS=$(nproc)
+elif [[ "$(uname -s)" == "Darwin" ]]; then
+    CPUS=$(sysctl -n hw.ncpu)
+else
+    CPUS=4  # Default fallback
+fi
+
+# Validate CPUS
+if [ -z "$CPUS" ] || [ "$CPUS" -le 0 ]; then
+    echo "Warning: Could not detect CPU count, defaulting to 4"
+    CPUS=4
+fi
 
 # Port Configuration
 REDIS_HOST_PORT=6377
@@ -17,6 +31,25 @@ update_docker_compose_cpuset() {
     local total_cores=$CPUS
     local physical_cores=$((CPUS / 2)) # Assuming hyperthreading
     echo "Detected: $total_cores logical cores, $physical_cores physical cores"
+    
+    # Validate total_cores
+    if [ -z "$total_cores" ] || [ "$total_cores" -le 0 ]; then
+        echo "⚠️ Invalid CPU count: $total_cores, skipping cpuset update"
+        return 1
+    fi
+    
+    # macOS Docker Desktop doesn't support cpuset, remove it from docker-compose.yml
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        echo "ℹ️ macOS detected: Docker Desktop doesn't support cpuset"
+        echo "   Removing cpuset fields from docker-compose.yml"
+        if [ -f "docker-compose.yml" ]; then
+            # Remove cpuset lines (and empty lines before them if they exist)
+            sed -i '' '/^[[:space:]]*cpuset:/d' docker-compose.yml
+            echo "✅ Removed cpuset fields from docker-compose.yml"
+        fi
+        echo "   Containers will use all available CPUs"
+        return 0
+    fi
     
     # Strategy 2: Use all logical cores (for maximum performance)
     local cpuset_all="0-$((total_cores - 1))"
@@ -60,11 +93,29 @@ print_system_info() {
     echo "Kernel: $(uname -r)"
     echo "CPU Count: $CPUS"
     echo "==== CPU Info ===="
-    lscpu
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        lscpu
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
+        sysctl -a | grep machdep.cpu
+    else
+        echo "Unknown OS, using basic CPU info"
+        uname -m
+    fi
     echo "==== Memory Info ===="
-    free -m
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        free -m
+    elif [[ "$(uname -s)" == "Darwin" ]]; then
+        sysctl hw.memsize | awk '{printf "Total Memory: %.2f GB\n", $2/1024/1024/1024}'
+        vm_stat
+    else
+        echo "Unknown OS, memory info not available"
+    fi
     echo "==== Disk Info ===="
-    df -hT
+    if [[ "$(uname -s)" == "Linux" ]]; then
+        df -hT
+    else
+        df -h
+    fi
 }
 
 # Setup directories and certificates
@@ -107,55 +158,67 @@ update_configurations() {
     echo "==== Updating Configurations ===="
     update_docker_compose_cpuset
     
-    # Non-TLS configurations
-    cat >> redis.conf << EOF
+    # Non-TLS configurations (overwrite, not append)
+    cat > redis.conf << EOF
+protected-mode no
+bind 0.0.0.0
+save ""
+enable-debug-command yes
 io-threads $CPUS
 io-threads-do-reads yes
-save ""
 appendonly no
-protected-mode no
 EOF
 
-    # TLS configurations
-    cat >> redis-tls.conf << EOF
-io-threads $CPUS
-io-threads-do-reads yes
+    # TLS configurations (overwrite, not append)
+    cat > redis-tls.conf << EOF
+protected-mode no
+bind 0.0.0.0
 tls-port 6390
 tls-cert-file /tls/test.crt
 tls-key-file /tls/test.key
 tls-ca-cert-file /tls/ca.crt
 save ""
+enable-debug-command yes
+io-threads $CPUS
+io-threads-do-reads yes
 appendonly no
-protected-mode no
-EOF
-
-    cat >> dragonfly-tls.conf << EOF
---proactor_threads=$CPUS
---port=6392
---tls_cert_file=/tls/test.crt
---tls_key_file=/tls/test.key
---tls_ca_cert_file=/tls/ca.crt
---dbfilename=''
 EOF
 
     # Update Dragonfly Dockerfiles
-    sed -i "s|--proactor_threads=2|--proactor_threads=$CPUS|" Dockerfile-dragonfly
-    sed -i "s|--proactor_threads=2|--proactor_threads=$CPUS|" Dockerfile-dragonfly-tls
+    # Match any number after --proactor_threads= and replace with $CPUS
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        sed -i '' "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly
+        sed -i '' "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly-tls
+    else
+        sed -i "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly
+        sed -i "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly-tls
+    fi
 }
 
 # Check container status
 check_container_status() {
     local service_name=$1
     if [ "$USE_DOCKER_COMPOSE" = true ]; then
-        local container_id
-        container_id=$($COMPOSE_CMD ps -q "$service_name" 2>/dev/null)
-        if [ -n "$container_id" ]; then
-            local running_state
-            running_state=$(docker inspect --format='{{.State.Running}}' "$container_id" 2>/dev/null)
-            if [ "$running_state" = "true" ]; then
-                return 0
-            fi
+        # Check if service is defined in docker-compose.yml
+        if ! $COMPOSE_CMD config --services 2>/dev/null | grep -q "^${service_name}$"; then
+            return 1
         fi
+        
+        # Check container status using docker-compose ps
+        local status
+        status=$($COMPOSE_CMD ps -q "$service_name" 2>/dev/null)
+        if [ -z "$status" ]; then
+            return 1
+        fi
+        
+        # Check if container is actually running
+        local running_state
+        running_state=$(docker inspect --format='{{.State.Running}}' "$status" 2>/dev/null)
+        if [ "$running_state" = "true" ]; then
+            return 0
+        fi
+        
+        # Container exists but not running
         return 1
     else
         if docker ps --format '{{.Names}}' | grep -q "^${service_name}$"; then
@@ -200,16 +263,29 @@ check_all_containers_status() {
 
 # Docker management functions
 build_containers() {
+    local start_after_build=${1:-false}
     echo "==== Building Docker Images ===="
     if [ "$USE_DOCKER_COMPOSE" = true ]; then
-        echo "Building with Docker Compose using: $COMPOSE_CMD"
-        $COMPOSE_CMD build --parallel
+        if [ "$start_after_build" = "true" ]; then
+            echo "Building and starting containers with Docker Compose using: $COMPOSE_CMD"
+            if $COMPOSE_CMD up -d --build; then
+                echo "✅ Docker Compose built and started containers"
+                docker images | grep -E 'redis|dragonfly'
+                return 0
+            else
+                echo "❌ Docker Compose failed to build/start containers"
+                return 1
+            fi
+        else
+            echo "Building with Docker Compose using: $COMPOSE_CMD"
+            $COMPOSE_CMD build --parallel
+        fi
     else
         echo "Building with Docker..."
         docker build -t redis:latest -f Dockerfile-redis .
         docker build -t dragonfly:latest -f Dockerfile-dragonfly .
         docker build -t redis-tls:latest -f Dockerfile-redis-tls .
-        docker build -t dragonfly-tls:latest -f Dockerfile-dragonfly-tls-nopass .
+        docker build -t dragonfly-tls:latest -f Dockerfile-dragonfly-tls .
     fi
     docker images | grep -E 'redis|dragonfly'
 }
@@ -248,8 +324,68 @@ start_containers() {
     
     if [ "$USE_DOCKER_COMPOSE" = true ]; then
         echo "Starting containers with Docker Compose using: $COMPOSE_CMD"
-        $COMPOSE_CMD up -d
-        sleep 30
+        
+        # Show what services will be started
+        echo "Available services in docker-compose.yml:"
+        $COMPOSE_CMD config --services 2>/dev/null || echo "  (could not list services)"
+        
+        if $COMPOSE_CMD up -d; then
+            echo "✅ Docker Compose command executed successfully"
+        else
+            echo "❌ Docker Compose failed to start containers"
+            echo "Checking logs..."
+            $COMPOSE_CMD logs --tail=50
+            echo ""
+            echo "Checking container status..."
+            $COMPOSE_CMD ps -a
+            return 1
+        fi
+        
+        echo "Waiting for containers to initialize..."
+        sleep 10
+        
+        # Check container status immediately
+        echo "Checking container status after startup..."
+        $COMPOSE_CMD ps
+        
+        # Wait a bit more for slow-starting containers
+        sleep 20
+        
+        # Verify containers are running
+        echo "Verifying container status..."
+        local services=("redis" "dragonfly" "redis-tls" "dragonfly-tls")
+        check_all_containers_status
+        local verify_status=$?
+        if [ $verify_status -ne 0 ]; then
+            echo "⚠️ Some containers failed to start or exited. Checking detailed status..."
+            echo ""
+            echo "All containers (including stopped):"
+            $COMPOSE_CMD ps -a
+            echo ""
+            echo "Recent logs from all services:"
+            $COMPOSE_CMD logs --tail=50
+            echo ""
+            echo "Checking individual container status:"
+            for service in "${services[@]}"; do
+                local container_id
+                container_id=$($COMPOSE_CMD ps -q "$service" 2>/dev/null)
+                if [ -n "$container_id" ]; then
+                    echo "  $service (ID: $container_id):"
+                    docker inspect --format='  Status: {{.State.Status}}, Running: {{.State.Running}}, ExitCode: {{.State.ExitCode}}' "$container_id" 2>/dev/null || echo "    (could not inspect)"
+                    if [ -n "$container_id" ]; then
+                        local exit_code
+                        exit_code=$(docker inspect --format='{{.State.ExitCode}}' "$container_id" 2>/dev/null)
+                        if [ "$exit_code" != "0" ] && [ -n "$exit_code" ]; then
+                            echo "    Last 10 lines of logs:"
+                            docker logs --tail=10 "$container_id" 2>/dev/null || echo "    (could not get logs)"
+                        fi
+                    fi
+                else
+                    echo "  $service: No container found"
+                fi
+            done
+            return 1
+        fi
     else
         echo "Starting containers individually..."
         local services=(
@@ -296,13 +432,31 @@ stop_containers() {
 
 # CSF Firewall management
 manage_csf_firewall() {
+    # CSF is a Linux firewall tool, skip on macOS and other non-Linux systems
+    if [[ "$(uname -s)" != "Linux" ]]; then
+        echo "==== Managing CSF Firewall ===="
+        echo "ℹ️ Skipping CSF firewall management (not on Linux system)"
+        return 0
+    fi
+    
+    # Check if csf command exists
+    if ! command -v csf &> /dev/null; then
+        echo "==== Managing CSF Firewall ===="
+        echo "ℹ️ CSF firewall not installed, skipping firewall management"
+        return 0
+    fi
+    
     echo "==== Managing CSF Firewall ===="
     for service in redis dragonfly redis-tls dragonfly-tls; do
         if docker ps --format '{{.Names}}' | grep -q "^${service}$"; then
             CONTAINER_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' $service 2>/dev/null)
             if [ ! -z "$CONTAINER_IP" ]; then
                 echo "Adding $service ($CONTAINER_IP) to CSF allow list"
-                csf -a $CONTAINER_IP $service || echo "Warning: Could not add $CONTAINER_IP to CSF"
+                if csf -a $CONTAINER_IP $service 2>/dev/null; then
+                    echo "✅ Successfully added $CONTAINER_IP to CSF"
+                else
+                    echo "⚠️ Warning: Could not add $CONTAINER_IP to CSF"
+                fi
             fi
         fi
     done
@@ -374,6 +528,43 @@ show_container_info() {
     echo "=================================="
 }
 
+# Convert memtier_benchmark TLS options to redis-cli format
+convert_tls_opts_for_redis_cli() {
+    local tls_opts="$1"
+    if [ -z "$tls_opts" ]; then
+        echo ""
+        return
+    fi
+    
+    # redis-cli uses --cert <file> instead of --cert=<file>
+    # and --insecure instead of --tls-skip-verify
+    local redis_cli_opts="--tls"
+    
+    # Extract cert, key, and cacert from memtier format using a more compatible method
+    # Handle --cert=<file> format
+    for opt in $tls_opts; do
+        case "$opt" in
+            --cert=*)
+                local cert_file="${opt#--cert=}"
+                redis_cli_opts="$redis_cli_opts --cert $cert_file"
+                ;;
+            --key=*)
+                local key_file="${opt#--key=}"
+                redis_cli_opts="$redis_cli_opts --key $key_file"
+                ;;
+            --cacert=*)
+                local cacert_file="${opt#--cacert=}"
+                redis_cli_opts="$redis_cli_opts --cacert $cacert_file"
+                ;;
+            --tls-skip-verify)
+                redis_cli_opts="$redis_cli_opts --insecure"
+                ;;
+        esac
+    done
+    
+    echo "$redis_cli_opts"
+}
+
 # Benchmark execution
 run_memtier_benchmark() {
     local host=$1
@@ -387,7 +578,8 @@ run_memtier_benchmark() {
     if [ -z "$tls_opts" ]; then
         redis-cli -h "$host" -p "$port" FLUSHALL
     else
-        redis-cli -h "$host" -p "$port" $tls_opts FLUSHALL
+        local redis_cli_tls_opts=$(convert_tls_opts_for_redis_cli "$tls_opts")
+        redis-cli -h "$host" -p "$port" $redis_cli_tls_opts FLUSHALL
     fi
     
     echo "==== Running benchmark: $output_file ===="
@@ -397,48 +589,63 @@ run_memtier_benchmark() {
         --key-pattern=G:G --key-minimum=1 --key-maximum=1000000 \
         --key-median=500000 --key-stddev=166667 $tls_opts"
     
+    if [ -n "$cpu_affinity" ]; then
+        if [[ "$(uname -s)" == "Linux" ]]; then
+            cmd="taskset -c $cpu_affinity $cmd"
+        elif [[ "$(uname -s)" == "Darwin" ]]; then
+            # macOS doesn't support CPU affinity like Linux's taskset
+            # CPU affinity is skipped on macOS
+            echo "Note: CPU affinity not supported on macOS, running without affinity"
+        fi
+    fi
+    
     eval "$cmd | tee $output_file" || echo "Benchmark failed: $output_file"
+}
+
+# Get CPU affinity for thread count (compatible with bash 3.x)
+get_cpu_affinity() {
+    local threads=$1
+    case $threads in
+        1) echo "0" ;;
+        2) echo "0,1" ;;
+        4) echo "0,1,2,3" ;;
+        8) echo "" ;;
+        *) echo "" ;;
+    esac
 }
 
 # Main benchmark execution
 run_benchmarks() {
     echo "==== Running Benchmarks ===="
     
-    declare -A cpu_affinities=(
-        [1]="0"
-        [2]="0,1"
-        [4]="0,1,2,3"
-        [8]=""
-    )
-    
     # Non-TLS benchmarks
     for threads in 1 2 4 8; do
-        cpu_affinity=${cpu_affinities[$threads]}
+        cpu_affinity=$(get_cpu_affinity $threads)
         
         # Redis
         run_memtier_benchmark "127.0.0.1" "$REDIS_HOST_PORT" "$threads" \
-            "./benchmarklogs/redis_benchmarks_${threads}threads.txt" "" "$cpu_affinity"
+            "./benchmarklogs/redis_${threads}threads.txt" "" "$cpu_affinity"
         
         # Dragonfly
         run_memtier_benchmark "127.0.0.1" "$DRAGONFLY_HOST_PORT" "$threads" \
-            "./benchmarklogs/dragonfly_benchmarks_${threads}threads.txt" "" "$cpu_affinity"
+            "./benchmarklogs/dragonfly_${threads}threads.txt" "" "$cpu_affinity"
     done
     
     # TLS benchmarks
     if [[ "$MEMTIER_REDIS_TLS" = [yY] ]] || [[ "$MEMTIER_DRAGONFLY_TLS" = [yY] ]]; then
         for threads in 1 2 4 8; do
-            cpu_affinity=${cpu_affinities[$threads]}
+            cpu_affinity=$(get_cpu_affinity $threads)
             
             if [[ "$MEMTIER_REDIS_TLS" = [yY] ]]; then
                 run_memtier_benchmark "127.0.0.1" "$REDIS_TLS_HOST_PORT" "$threads" \
-                    "./benchmarklogs/redis_benchmarks_${threads}threads_tls.txt" \
+                    "./benchmarklogs/redis_${threads}threads_tls.txt" \
                     "--tls --cert=${PWD}/test.crt --key=${PWD}/test.key --cacert=${PWD}/ca.crt --tls-skip-verify" \
                     "$cpu_affinity"
             fi
             
             if [[ "$MEMTIER_DRAGONFLY_TLS" = [yY] ]]; then
                 run_memtier_benchmark "127.0.0.1" "$DRAGONFLY_TLS_HOST_PORT" "$threads" \
-                    "./benchmarklogs/dragonfly_benchmarks_${threads}threads_tls.txt" \
+                    "./benchmarklogs/dragonfly_${threads}threads_tls.txt" \
                     "--tls --cert=${PWD}/client_cert.pem --key=${PWD}/client_priv.pem --cacert=${PWD}/ca.crt" \
                     "$cpu_affinity"
             fi
@@ -463,8 +670,10 @@ process_results() {
             if [ -f "./benchmarklogs/${db}_${threads}threads_tls.txt" ]; then
                 python3 scripts/parse_memtier_to_md.py \
                     "./benchmarklogs/${db}_${threads}threads_tls.txt" \
-                    "$(echo ${db^}) TLS $threads Thread$([ $threads -gt 1 ] && echo 's')"
+                    "$(echo "$db" | awk '{print toupper(substr($0,1,1)) substr($0,2)}') TLS $threads Thread$([ $threads -gt 1 ] && echo 's')"
             fi
+
+            
         done
     done
     
@@ -493,8 +702,14 @@ process_results() {
     done
     
     # Create final combined files
-    cat ./benchmarklogs/combined_*_results.md > ./combined_all_results.md 2>/dev/null || true
-    cat ./benchmarklogs/combined_*-tls_results.md > ./combined_all_results_tls.md 2>/dev/null || true
+    # cat ./benchmarklogs/combined_*_results.md > ./combined_all_results.md 2>/dev/null || true
+    # cat ./benchmarklogs/combined_*-tls_results.md > ./combined_all_results_tls.md 2>/dev/null || true
+    ls ./benchmarklogs/combined_*_results.md 2>/dev/null \
+    | grep -v '\-tls_' \
+    | xargs -r cat > ./combined_all_results.md
+
+    ls ./benchmarklogs/combined_*-tls_results.md 2>/dev/null \
+    | xargs -r cat > ./combined_all_results_tls.md
 }
 
 # Generate charts
@@ -581,14 +796,30 @@ main() {
     print_system_info
     setup_environment
     update_configurations
-    build_containers
-    start_containers
+    
+    # When using Docker Compose, build and start in one command for efficiency
+    if [ "$USE_DOCKER_COMPOSE" = true ]; then
+        if build_containers true; then
+            echo "✅ Containers built and started successfully"
+            # Wait a bit for containers to fully initialize
+            sleep 15
+            # Verify containers are running
+            check_all_containers_status
+        else
+            echo "❌ Failed to build/start containers"
+            return 1
+        fi
+    else
+        build_containers
+        start_containers
+    fi
+    
     manage_csf_firewall
     test_connectivity
     run_benchmarks
     process_results
     generate_charts
-    cleanup
+    # cleanup
     
     echo "=================================="
     echo "BENCHMARK PROCESS COMPLETED"
@@ -622,13 +853,19 @@ standalone_start() {
     fi
     
     echo "Checking if images exist..."
+    # Get Docker Compose image name for a given image (compatible with bash 3.x)
+    get_compose_image_name() {
+        local image=$1
+        case $image in
+            "redis:latest") echo "redis-comparison-benchmarks-redis:latest" ;;
+            "dragonfly:latest") echo "redis-comparison-benchmarks-dragonfly:latest" ;;
+            "redis-tls:latest") echo "redis-comparison-benchmarks-redis-tls:latest" ;;
+            "dragonfly-tls:latest") echo "redis-comparison-benchmarks-dragonfly-tls:latest" ;;
+            *) echo "" ;;
+        esac
+    }
+    
     if [ "$USE_DOCKER_COMPOSE" = true ]; then
-        declare -A image_mappings=(
-            ["redis:latest"]="redis-comparison-benchmarks-redis:latest"
-            ["dragonfly:latest"]="redis-comparison-benchmarks-dragonfly:latest"
-            ["redis-tls:latest"]="redis-comparison-benchmarks-redis-tls:latest"
-            ["dragonfly-tls:latest"]="redis-comparison-benchmarks-dragonfly-tls:latest"
-        )
         local required_images=("redis:latest" "dragonfly:latest" "redis-tls:latest" "dragonfly-tls:latest")
     else
         local required_images=("redis:latest" "dragonfly:latest" "redis-tls:latest" "dragonfly-tls:latest")
@@ -649,7 +886,7 @@ standalone_start() {
         echo "Tagging Docker Compose generated images..."
         local tagged_count=0
         for missing_image in "${missing_images[@]}"; do
-            local compose_image="${image_mappings[$missing_image]}"
+            local compose_image=$(get_compose_image_name "$missing_image")
             if [ -n "$compose_image" ] && docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${compose_image}$"; then
                 echo "🏷️ Tagging $compose_image → $missing_image"
                 if docker tag "$compose_image" "$missing_image"; then
@@ -683,7 +920,7 @@ standalone_start() {
         if [ "$USE_DOCKER_COMPOSE" = true ]; then
             echo "Tagging newly built images..."
             for missing_image in "${missing_images[@]}"; do
-                local compose_image="${image_mappings[$missing_image]}"
+                local compose_image=$(get_compose_image_name "$missing_image")
                 if [ -n "$compose_image" ] && docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${compose_image}$"; then
                     docker tag "$compose_image" "$missing_image" || echo "Warning: Failed to tag $missing_image"
                 fi
@@ -694,16 +931,16 @@ standalone_start() {
     echo ""
     echo "✅ All images ready - proceeding to start containers"
     echo ""
-    echo "🚀 Starting all containers with Docker Compose..."
+    echo "🚀 Starting all containers with Docker Compose (will build if needed)..."
     
     echo "Stopping any existing containers..."
     $COMPOSE_CMD down --remove-orphans 2>/dev/null || true
     
-    echo "Starting containers..."
-    if $COMPOSE_CMD up -d; then
-        echo "✅ Docker Compose startup completed"
+    echo "Building and starting containers..."
+    if $COMPOSE_CMD up -d --build; then
+        echo "✅ Docker Compose build and startup completed"
     else
-        echo "❌ Docker Compose startup failed"
+        echo "❌ Docker Compose build/startup failed"
         echo "Checking logs..."
         $COMPOSE_CMD logs --tail=20
         return 1
@@ -897,23 +1134,20 @@ quick_benchmark() {
     
     mkdir -p benchmarklogs
     
-    declare -A cpu_affinities=(
-        [1]="0"
-        [2]="0,1"
-        [4]="0-3"
-        [6]="0-5"
-        [8]="0-7"
-    )
+    threads_list=(1 2 4 6 8)
+    cpu_affinities=("0" "0,1" "0-3" "0-5" "0-7")
     
-    for threads in 1 2 4 6 8; do
-        cpu_affinity=${cpu_affinities[$threads]}
-        echo "Running $threads thread benchmarks cpu_affinity=${cpu_affinity}..."
-        
-        run_memtier_benchmark "127.0.0.1" "$REDIS_HOST_PORT" "$threads" \
-            "./benchmarklogs/redis_${threads}threads.txt" "" "$cpu_affinity"
-        
-        run_memtier_benchmark "127.0.0.1" "$DRAGONFLY_HOST_PORT" "$threads" \
-            "./benchmarklogs/dragonfly_${threads}threads.txt" "" "$cpu_affinity"
+    for i in "${!threads_list[@]}"; do
+        threads=${threads_list[$i]}
+        cpu_affinity=${cpu_affinities[$i]}
+
+        logfile="./benchmarklogs/redis_${threads}threads.txt"
+        echo "Running Redis benchmark with $threads threads (cpu_affinity=${cpu_affinity}) -> $logfile"
+        run_memtier_benchmark "127.0.0.1" "$REDIS_HOST_PORT" "$threads" "$logfile" "" "$cpu_affinity"
+
+        logfile="./benchmarklogs/dragonfly_${threads}threads.txt"
+        echo "Running Dragonfly benchmark with $threads threads (cpu_affinity=${cpu_affinity}) -> $logfile"
+        run_memtier_benchmark "127.0.0.1" "$DRAGONFLY_HOST_PORT" "$threads" "$logfile" "" "$cpu_affinity"
     done
     
     echo "✅ Quick benchmark completed. Results in ./benchmarklogs/"

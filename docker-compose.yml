@@ -7,7 +7,17 @@ services:
     container_name: redis
     ports:
       - "6377:6379"
-    cpuset: "0-3"
+    ulimits:
+      memlock: -1
+
+  dragonfly:
+    build:
+      context: .
+      dockerfile: Dockerfile-dragonfly
+    image: dragonfly:latest
+    container_name: dragonfly
+    ports:
+      - "6381:6379"
     ulimits:
       memlock: -1
 
@@ -19,22 +29,11 @@ services:
   #   container_name: keydb
   #   ports:
   #     - "6380:6379"
-  #   cpuset: "0-3"
+  #   cpuset: "0-9"
   #   ulimits:
   #     memlock: -1
   #   restart: unless-stopped
 
-  dragonfly:
-    build:
-      context: .
-      dockerfile: Dockerfile-dragonfly
-    image: dragonfly:latest
-    container_name: dragonfly
-    ports:
-      - "6381:6379"
-    cpuset: "0-3"
-    ulimits:
-      memlock: -1
   # valkey:
   #   build:
   #     context: .
@@ -43,23 +42,22 @@ services:
   #   container_name: valkey
   #   ports:
   #     - "6382:6379"
-  #   cpuset: "0-3"
+  #   cpuset: "0-9"
   #   ulimits:
   #     memlock: -1
   #   restart: unless-stopped
 
-  # redis-tls:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile-redis-tls
-  #   image: redis-tls:latest
-  #   container_name: redis-tls
-  #   ports:
-  #     - "6390:6390"
-  #   cpuset: "0-3"
-  #   ulimits:
-  #     memlock: -1
-  #   restart: unless-stopped
+  redis-tls:
+    build:
+      context: .
+      dockerfile: Dockerfile-redis-tls
+    image: redis-tls:latest
+    container_name: redis-tls
+    ports:
+      - "6390:6390"
+    ulimits:
+      memlock: -1
+    restart: unless-stopped
 
   # keydb-tls:
   #   build:
@@ -69,23 +67,22 @@ services:
   #   container_name: keydb-tls
   #   ports:
   #     - "6391:6391"
-  #   cpuset: "0-3"
+  #   cpuset: "0-9"
   #   ulimits:
   #     memlock: -1
   #   restart: unless-stopped
 
-  # dragonfly-tls:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile-dragonfly-tls-nopass
-  #   image: dragonfly-tls:latest
-  #   container_name: dragonfly-tls
-  #   ports:
-  #     - "6392:6392"
-  #   cpuset: "0-3"
-  #   ulimits:
-  #     memlock: -1
-  #   restart: unless-stopped
+  dragonfly-tls:
+    build:
+      context: .
+      dockerfile: Dockerfile-dragonfly-tls
+    image: dragonfly-tls:latest
+    container_name: dragonfly-tls
+    ports:
+      - "6392:6392"
+    ulimits:
+      memlock: -1
+    restart: unless-stopped
 
   # valkey-tls:
   #   build:
@@ -95,7 +92,7 @@ services:
   #   container_name: valkey-tls
   #   ports:
   #     - "6393:6393"
-  #   cpuset: "0-3"
+  #   cpuset: "0-9"
   #   ulimits:
   #     memlock: -1
   #   restart: unless-stopped

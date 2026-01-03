@@ -6,12 +6,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sys
 
-# Updated to include 4 threads
+# Updated to include 4 threads, excluding Totals
 EXPECTED_LABELS = [
-    "1 Thread Sets", "1 Thread Gets", "1 Thread Totals",
-    "2 Threads Sets", "2 Threads Gets", "2 Threads Totals",
-    "4 Threads Sets", "4 Threads Gets", "4 Threads Totals",
-    "8 Threads Sets", "8 Threads Gets", "8 Threads Totals"
+    "1 Thread Sets", "1 Thread Gets",
+    "2 Threads Sets", "2 Threads Gets",
+    "4 Threads Sets", "4 Threads Gets",
+    "8 Threads Sets", "8 Threads Gets"
 ]
 
 # Only Redis and Dragonfly
@@ -69,7 +69,7 @@ def parse_markdown(filepath):
     Read combined_all_results.md (or combined_all_results_tls.md) line by line.
     Return a nested dict:
        data[db]["avg"][label], data[db]["p50"][label], data[db]["p99"][label]
-    Initialized to 0.0 for every of the twelve EXPECTED_LABELS.
+    Initialized to 0.0 for every of the eight EXPECTED_LABELS (Sets and Gets only, no Totals).
     Print debug lines for every skip/store.
     """
     data = {
@@ -109,6 +109,11 @@ def parse_markdown(filepath):
             
             # Skip if this is a header row
             if op == "Type" or "Databases" in db_and_threads:
+                continue
+            
+            # Skip Totals - we only plot Sets and Gets
+            if op == "Totals":
+                print(f"  [DEBUG] Skipping: Totals not plotted -> {line}")
                 continue
                 
             try:
@@ -174,13 +179,13 @@ def plot_grouped_bars(all_data, metric_key, title_suffix, ylabel, out_filename,
                         requests, clients, pipeline, data_size):
     """
     Build a grouped‐bar chart from all_data[db][metric_key][label]
-    and save it to out_filename. Optimized for 12 data points with 2 databases.
+    and save it to out_filename. Optimized for 8 data points (Sets and Gets only, no Totals) with 2 databases.
     """
     vals = []
     for db in DBS:
         row = [all_data[db][metric_key].get(lbl, 0.0) for lbl in EXPECTED_LABELS]
         vals.append(row)
-    arr = np.array(vals)  # shape = (2, 12)
+    arr = np.array(vals)  # shape = (2, 8)
 
     x = np.arange(len(EXPECTED_LABELS))
     width = 0.35  # Width for 2 bars
@@ -216,7 +221,7 @@ def plot_grouped_bars(all_data, metric_key, title_suffix, ylabel, out_filename,
     ax.set_ylabel(ylabel, fontsize=14, fontweight='semibold')
     ax.grid(axis='y', linestyle='--', linewidth=0.5, alpha=0.7)
     ax.set_xticks(x)
-    # Rotate x-axis labels for better readability with 12 labels
+    # Rotate x-axis labels for better readability with 8 labels
     ax.set_xticklabels(EXPECTED_LABELS, rotation=45, ha="right", fontsize=9)
     ax.legend(fontsize=12, loc='upper left')
     ax.tick_params(axis='y', labelsize=12)
