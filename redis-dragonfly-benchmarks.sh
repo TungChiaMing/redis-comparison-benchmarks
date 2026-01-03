@@ -573,7 +573,11 @@ run_memtier_benchmark() {
     local output_file=$4
     local tls_opts=$5
     local cpu_affinity=$6
-    
+
+    local key_opts="--key-pattern=G:G \
+        --key-minimum=1 --key-maximum=1000000 \
+        --key-median=500000 --key-stddev=166667"
+
     echo "==== Flushing DB on $host:$port ===="
     if [ -z "$tls_opts" ]; then
         redis-cli -h "$host" -p "$port" FLUSHALL
@@ -581,25 +585,43 @@ run_memtier_benchmark() {
         local redis_cli_tls_opts=$(convert_tls_opts_for_redis_cli "$tls_opts")
         redis-cli -h "$host" -p "$port" $redis_cli_tls_opts FLUSHALL
     fi
-    
+
+    echo "==== Preloading data ===="
+    local preload_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
+        --ratio=1:0 \
+        --requests=1000000 \
+        --clients=50 --threads=4 \
+        --pipeline=1 --data-size=1000 \
+        $key_opts $tls_opts"
+
+    echo "==== Preloading data with pipeline and more threads ===="
+
+    preload_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
+        --ratio=1:0 \
+        --requests=100000 \
+        --clients=100 --threads=8 \
+        --pipeline=50 --data-size=1000 \
+        $key_opts $tls_opts"
+
+    eval "$preload_cmd" || echo "Preload failed"
+
     echo "==== Running benchmark: $output_file ===="
-    local cmd="memtier_benchmark -s $host --ratio=1:15 -p $port --protocol=redis \
-        -t $threads --distinct-client-seed --hide-histogram --requests=2000 \
-        --clients=100 --pipeline=1 --data-size=384 \
-        --key-pattern=G:G --key-minimum=1 --key-maximum=1000000 \
-        --key-median=500000 --key-stddev=166667 $tls_opts"
-    
+    local bench_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
+        --ratio=1:15 \
+        -t $threads --distinct-client-seed --hide-histogram \
+        --requests=2000 --clients=100 --pipeline=1 \
+        --data-size=1000 \
+        $key_opts $tls_opts"
+
     if [ -n "$cpu_affinity" ]; then
         if [[ "$(uname -s)" == "Linux" ]]; then
-            cmd="taskset -c $cpu_affinity $cmd"
+            bench_cmd="taskset -c $cpu_affinity $bench_cmd"
         elif [[ "$(uname -s)" == "Darwin" ]]; then
-            # macOS doesn't support CPU affinity like Linux's taskset
-            # CPU affinity is skipped on macOS
             echo "Note: CPU affinity not supported on macOS, running without affinity"
         fi
     fi
-    
-    eval "$cmd | tee $output_file" || echo "Benchmark failed: $output_file"
+
+    eval "$bench_cmd | tee $output_file" || echo "Benchmark failed: $output_file"
 }
 
 # Get CPU affinity for thread count (compatible with bash 3.x)
