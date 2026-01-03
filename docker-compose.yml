@@ -35,13 +35,6 @@ services:
     cpuset: "0-3"
     ulimits:
       memlock: -1
-    command: >
-      bash -c "
-      cd /opt/dragonfly/build-opt &&
-      exec ./dragonfly
-        --port 6379
-        --alsologtostderr
-      "
   # valkey:
   #   build:
   #     context: .

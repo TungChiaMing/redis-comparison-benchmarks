@@ -14,8 +14,8 @@ EXPECTED_LABELS = [
     "8 Threads Sets", "8 Threads Gets", "8 Threads Totals"
 ]
 
-# Exactly these four DB names in this plotting order:
-DBS = ["Redis", "KeyDB", "Dragonfly", "Valkey"]
+# Only Redis and Dragonfly
+DBS = ["Redis", "Dragonfly"]
 
 
 def normalize_threads(token):
@@ -42,7 +42,6 @@ def parse_db_and_threads(db_and_threads):
     - "Redis 1 Thread"
     - "Redis TLS 1 Thread" 
     - "Dragonfly 2 Thread"
-    - "KeyDB TLS 4 Threads"
     
     Returns (db_name, thread_token) or (None, None) if parsing fails
     """
@@ -171,46 +170,40 @@ def parse_markdown(filepath):
 
 
 def plot_grouped_bars(all_data, metric_key, title_suffix, ylabel, out_filename,
-                        redis_io_threads, keydb_server_threads, dragonfly_proactor_threads, valkey_io_threads,
+                        redis_io_threads, dragonfly_proactor_threads,
                         requests, clients, pipeline, data_size):
     """
     Build a grouped‐bar chart from all_data[db][metric_key][label]
-    and save it to out_filename. Optimized for 12 data points:
-    - Larger figure size for better spacing
-    - Smaller font sizes for data labels
-    - Rotated x-axis labels for better readability
-    - Adjusted bar width and spacing
+    and save it to out_filename. Optimized for 12 data points with 2 databases.
     """
     vals = []
     for db in DBS:
         row = [all_data[db][metric_key].get(lbl, 0.0) for lbl in EXPECTED_LABELS]
         vals.append(row)
-    arr = np.array(vals)  # shape = (4, 12)
+    arr = np.array(vals)  # shape = (2, 12)
 
     x = np.arange(len(EXPECTED_LABELS))
-    width = 0.18  # Reduced from 0.2 to give more space
-    offsets = [-1.5 * width, -0.5 * width, 0.5 * width, 1.5 * width]
+    width = 0.35  # Width for 2 bars
+    offsets = [-0.5 * width, 0.5 * width]
 
-    # Increased figure size for better spacing with 12 data points
+    # Figure size optimized for 2 databases
     fig, ax = plt.subplots(figsize=(20, 12))
 
     DBS_WITH_THREADS = [
         f"Redis io-threads {redis_io_threads}",
-        f"KeyDB io-threads {keydb_server_threads}",
-        f"Dragonfly proactor_threads {dragonfly_proactor_threads}",
-        f"Valkey io-threads {valkey_io_threads}"
+        f"Dragonfly proactor_threads {dragonfly_proactor_threads}"
     ]
 
     for i, db_label in enumerate(DBS_WITH_THREADS):
         ax.bar(
             x + offsets[i],
-            arr[i], # arr is ordered by DBS, not DBS_WITH_THREADS
+            arr[i],
             width,
             label=db_label
         )
 
     title_parts = [
-        "Redis vs KeyDB vs Dragonfly vs Valkey – Memtier Benchmarks (4 vCPU VM)",
+        "Redis vs Dragonfly – Memtier Benchmarks (4 vCPU VM)",
         f"(requests:{requests} clients:{clients} pipeline:{pipeline} data_size:{data_size})",
         "(lower is better) by George Liu"
     ]
@@ -238,12 +231,12 @@ def plot_grouped_bars(all_data, metric_key, title_suffix, ylabel, out_filename,
                     xytext=(0, 3),
                     textcoords="offset points",
                     ha="center", va="bottom",
-                    fontsize=7  # Reduced from 9 to 7
+                    fontsize=8
                 )
 
-    plt.tight_layout(rect=[0, 0, 1, 0.94])  # Adjusted for rotated labels
+    plt.tight_layout(rect=[0, 0, 1, 0.94])
     print(f"[DEBUG] Saving plot to {out_filename}")
-    plt.savefig(out_filename, dpi=300, bbox_inches='tight')  # Higher DPI for better quality
+    plt.savefig(out_filename, dpi=300, bbox_inches='tight')
     plt.close()
 
 
@@ -252,9 +245,7 @@ if __name__ == "__main__":
     parser.add_argument("md_path", help="Path to the markdown file with benchmark results (e.g., combined_all_results.md)")
     parser.add_argument("prefix", help="Prefix for output file names (e.g., nonTLS or TLS)")
     parser.add_argument("--redis_io_threads", default='2', help="Redis IO threads")
-    parser.add_argument("--keydb_server_threads", default='2', help="KeyDB server threads")
     parser.add_argument("--dragonfly_proactor_threads", default='3', help="Dragonfly proactor threads")
-    parser.add_argument("--valkey_io_threads", default='1', help="Valkey IO threads")
     parser.add_argument("--requests", default='2000', help="Number of requests")
     parser.add_argument("--clients", default='100', help="Number of clients")
     parser.add_argument("--pipeline", default='1', help="Pipeline depth")
@@ -272,9 +263,7 @@ if __name__ == "__main__":
         "Latency (ms)",
         f"latency-{args.prefix}-avg.png",
         args.redis_io_threads,
-        args.keydb_server_threads,
         args.dragonfly_proactor_threads,
-        args.valkey_io_threads,
         args.requests,
         args.clients,
         args.pipeline,
@@ -287,9 +276,7 @@ if __name__ == "__main__":
         "Latency (ms)",
         f"latency-{args.prefix}-p50.png",
         args.redis_io_threads,
-        args.keydb_server_threads,
         args.dragonfly_proactor_threads,
-        args.valkey_io_threads,
         args.requests,
         args.clients,
         args.pipeline,
@@ -302,9 +289,7 @@ if __name__ == "__main__":
         "Latency (ms)",
         f"latency-{args.prefix}-p99.png",
         args.redis_io_threads,
-        args.keydb_server_threads,
         args.dragonfly_proactor_threads,
-        args.valkey_io_threads,
         args.requests,
         args.clients,
         args.pipeline,
