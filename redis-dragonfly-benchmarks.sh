@@ -575,42 +575,35 @@ run_memtier_benchmark() {
     local cpu_affinity=$6
 
     local key_opts="--key-pattern=G:G \
-        --key-minimum=1 --key-maximum=1000000 \
-        --key-median=500000 --key-stddev=166667"
+        --key-minimum=1 --key-maximum=200000 \
+        --key-median=100000 --key-stddev=33333"
 
-    echo "==== Flushing DB on $host:$port ===="
-    if [ -z "$tls_opts" ]; then
-        redis-cli -h "$host" -p "$port" FLUSHALL
+    # === Preload only once per DB ===
+    local preload_flag="./benchmarklogs/preload_done_${host}_${port}"
+    if [ ! -f "$preload_flag" ]; then
+        echo "==== Preloading data (full key range) ===="
+        preload_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
+            --ratio=1:0 \
+            --requests=200000 \
+            --clients=50 --threads=8 \
+            --pipeline=20 --data-size=1024 \
+            $key_opts $tls_opts"
+
+
+        eval "$preload_cmd" || echo "Preload failed"
+
+        touch "$preload_flag"
     else
-        local redis_cli_tls_opts=$(convert_tls_opts_for_redis_cli "$tls_opts")
-        redis-cli -h "$host" -p "$port" $redis_cli_tls_opts FLUSHALL
+        echo "==== Skipping preload: already done ===="
     fi
 
-    echo "==== Preloading data ===="
-    local preload_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
-        --ratio=1:0 \
-        --requests=1000000 \
-        --clients=50 --threads=4 \
-        --pipeline=1 --data-size=1000 \
-        $key_opts $tls_opts"
-
-    echo "==== Preloading data with pipeline and more threads ===="
-
-    preload_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
-        --ratio=1:0 \
-        --requests=100000 \
-        --clients=100 --threads=8 \
-        --pipeline=50 --data-size=1000 \
-        $key_opts $tls_opts"
-
-    eval "$preload_cmd" || echo "Preload failed"
-
+    # === Running benchmark ===
     echo "==== Running benchmark: $output_file ===="
     local bench_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
         --ratio=1:15 \
         -t $threads --distinct-client-seed --hide-histogram \
         --requests=2000 --clients=100 --pipeline=1 \
-        --data-size=1000 \
+        --data-size=1024 \
         $key_opts $tls_opts"
 
     if [ -n "$cpu_affinity" ]; then
