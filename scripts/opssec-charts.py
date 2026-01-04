@@ -193,9 +193,8 @@ def plot_ops_chart(all_data, out_filename,
         )
 
     title_parts = [
-        "Redis vs Dragonfly – Memtier Benchmarks (4 vCPU VM)",
-        f"(requests:{requests} clients:{clients} pipeline:{pipeline} data_size:{data_size})",
-        "(higher is better) by George Liu"
+        "Redis vs Dragonfly - Memtier Benchmarks",
+        f"(requests:{requests} clients:{clients} data_size:{data_size}B) SET:GET = 1:15"
     ]
     ax.set_title(
         "\n".join(title_parts),

@@ -157,7 +157,7 @@ setup_environment() {
 update_configurations() {
     echo "==== Updating Configurations ===="
     update_docker_compose_cpuset
-    
+
     # Non-TLS configurations (overwrite, not append)
     cat > redis.conf << EOF
 protected-mode no
@@ -186,12 +186,17 @@ EOF
 
     # Update Dragonfly Dockerfiles
     # Match any number after --proactor_threads= and replace with $CPUS
+    new_line="CMD [\"dragonfly\", \"--tls\", \"--port=6392\", \"--tls_cert_file=/tls/test.crt\", \"--tls_key_file=/tls/test.key\", \"--tls_ca_cert_file=/tls/ca.crt\", \"--proactor_threads=$CPUS\", \"--cache_mode=true\", \"--hz=200\", \"--maxmemory=32gb\", \"--keys_output_limit=32768\"]"
+
+    new_line_no_tls="CMD [\"dragonfly\", \"--port=6379\", \"--proactor_threads=$CPUS\", \"--cache_mode=true\", \"--hz=200\", \"--maxmemory=32gb\", \"--keys_output_limit=32768\"]"
+
+
     if [[ "$(uname -s)" == "Darwin" ]]; then
-        sed -i '' "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly
-        sed -i '' "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly-tls
+        sed -i '' "s|^CMD.*|$new_line_no_tls|" Dockerfile-dragonfly
+        sed -i '' "s|^CMD.*|$new_line|" Dockerfile-dragonfly-tls
     else
-        sed -i "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly
-        sed -i "s|--proactor_threads=[0-9]*|--proactor_threads=$CPUS|g" Dockerfile-dragonfly-tls
+        sed -i "s|^CMD.*|$new_line_no_tls|" Dockerfile-dragonfly
+        sed -i "s|^CMD.*|$new_line|" Dockerfile-dragonfly-tls
     fi
 }
 
@@ -574,23 +579,31 @@ run_memtier_benchmark() {
     local tls_opts=$5
     local cpu_affinity=$6
 
-    local key_opts="--key-pattern=G:G \
-        --key-minimum=1 --key-maximum=200000 \
-        --key-median=100000 --key-stddev=33333"
-
-    # === Preload only once per DB ===
+    # === Preload only once per DB using DEBUG POPULATE ===
     local preload_flag="./benchmarklogs/preload_done_${host}_${port}"
     if [ ! -f "$preload_flag" ]; then
-        echo "==== Preloading data (full key range) ===="
-        preload_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
-            --ratio=1:0 \
-            --requests=200000 \
-            --clients=50 --threads=8 \
-            --pipeline=20 --data-size=1024 \
-            $key_opts $tls_opts"
+        echo "==== Preloading data (10M keys using DEBUG POPULATE) ===="
 
-
-        eval "$preload_cmd" || echo "Preload failed"
+        if [ -z "$tls_opts" ]; then
+            echo "Running: redis-cli -h $host -p $port DEBUG POPULATE 10000000 550"
+            redis-cli -h "$host" -p "$port" DEBUG POPULATE 10000000 550
+            local rc=$?
+            if [ $rc -ne 0 ]; then
+                echo "ERROR: DEBUG POPULATE failed with exit code $rc"
+            else
+                echo "DEBUG POPULATE succeeded"
+            fi
+        else
+            local redis_cli_tls_opts=$(convert_tls_opts_for_redis_cli "$tls_opts")
+            echo "Running: redis-cli -h $host -p $port $redis_cli_tls_opts DEBUG POPULATE 10000000 550"
+            redis-cli -h "$host" -p "$port" $redis_cli_tls_opts DEBUG POPULATE 10000000 550
+            local rc=$?
+            if [ $rc -ne 0 ]; then
+                echo "ERROR: DEBUG POPULATE with TLS failed with exit code $rc"
+            else
+                echo "DEBUG POPULATE with TLS succeeded"
+            fi
+        fi
 
         touch "$preload_flag"
     else
@@ -602,9 +615,8 @@ run_memtier_benchmark() {
     local bench_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
         --ratio=1:15 \
         -t $threads --distinct-client-seed --hide-histogram \
-        --requests=2000 --clients=100 --pipeline=1 \
-        --data-size=1024 \
-        $key_opts $tls_opts"
+        --clients=30 --requests=200000 \
+        $tls_opts"
 
     if [ -n "$cpu_affinity" ]; then
         if [[ "$(uname -s)" == "Linux" ]]; then
