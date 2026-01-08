@@ -235,8 +235,8 @@ if __name__ == "__main__":
     parser.add_argument("prefix", help="Prefix for output file names (e.g., nonTLS or TLS)")
     parser.add_argument("--redis_io_threads", default='2', help="Redis IO threads")
     parser.add_argument("--dragonfly_proactor_threads", default='3', help="Dragonfly proactor threads")
-    parser.add_argument("--requests", default='2000', help="Number of requests")
-    parser.add_argument("--clients", default='100', help="Number of clients")
+    parser.add_argument("--requests", default='200000', help="Number of requests")
+    parser.add_argument("--clients", default='30', help="Number of clients")
     parser.add_argument("--pipeline", default='1', help="Pipeline depth")
     parser.add_argument("--data_size", default='1024', help="Data size in bytes")
 
