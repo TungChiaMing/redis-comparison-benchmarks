@@ -186,9 +186,9 @@ EOF
 
     # Update Dragonfly Dockerfiles
     # Match any number after --proactor_threads= and replace with $CPUS
-    new_line="CMD [\"dragonfly\", \"--tls\", \"--port=6392\", \"--tls_cert_file=/tls/test.crt\", \"--tls_key_file=/tls/test.key\", \"--tls_ca_cert_file=/tls/ca.crt\", \"--proactor_threads=$CPUS\", \"--cache_mode=true\", \"--hz=200\", \"--maxmemory=32gb\", \"--keys_output_limit=32768\"]"
+    new_line="CMD [\"dragonfly\", \"--tls\", \"--port=6392\", \"--tls_cert_file=/tls/test.crt\", \"--tls_key_file=/tls/test.key\", \"--tls_ca_cert_file=/tls/ca.crt\", \"--proactor_threads=$CPUS\"]"
 
-    new_line_no_tls="CMD [\"dragonfly\", \"--port=6379\", \"--proactor_threads=$CPUS\", \"--cache_mode=true\", \"--hz=200\", \"--maxmemory=32gb\", \"--keys_output_limit=32768\"]"
+    new_line_no_tls="CMD [\"dragonfly\", \"--port=6379\", \"--proactor_threads=$CPUS\"]"
 
 
     if [[ "$(uname -s)" == "Darwin" ]]; then
@@ -585,8 +585,8 @@ run_memtier_benchmark() {
         echo "==== Preloading data (10M keys using DEBUG POPULATE) ===="
 
         if [ -z "$tls_opts" ]; then
-            echo "Running: redis-cli -h $host -p $port DEBUG POPULATE 10000000 550"
-            redis-cli -h "$host" -p "$port" DEBUG POPULATE 10000000 550
+            echo "Running: redis-cli -h $host -p $port DEBUG POPULATE 10000000 data"
+            redis-cli -h "$host" -p "$port" DEBUG POPULATE 10000000 data
             local rc=$?
             if [ $rc -ne 0 ]; then
                 echo "ERROR: DEBUG POPULATE failed with exit code $rc"
@@ -595,8 +595,8 @@ run_memtier_benchmark() {
             fi
         else
             local redis_cli_tls_opts=$(convert_tls_opts_for_redis_cli "$tls_opts")
-            echo "Running: redis-cli -h $host -p $port $redis_cli_tls_opts DEBUG POPULATE 10000000 550"
-            redis-cli -h "$host" -p "$port" $redis_cli_tls_opts DEBUG POPULATE 10000000 550
+            echo "Running: redis-cli -h $host -p $port $redis_cli_tls_opts DEBUG POPULATE 10000000 data"
+            redis-cli -h "$host" -p "$port" $redis_cli_tls_opts DEBUG POPULATE 10000000 data
             local rc=$?
             if [ $rc -ne 0 ]; then
                 echo "ERROR: DEBUG POPULATE with TLS failed with exit code $rc"
@@ -612,10 +612,23 @@ run_memtier_benchmark() {
 
     # === Running benchmark ===
     echo "==== Running benchmark: $output_file ===="
-    local bench_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
-        --ratio=1:15 \
+    # local bench_cmd="memtier_benchmark -s $host -p $port --protocol=redis \
+    #     --ratio=1:15 \
+    #     -t $threads --distinct-client-seed --hide-histogram \
+    #     --clients=30 --requests=200000 \
+    #     $tls_opts"
+
+    local bench_cmd="memtier_benchmark \
+        -s $host -p $port \
+        --protocol=redis \
         -t $threads --distinct-client-seed --hide-histogram \
-        --clients=30 --requests=200000 \
+        --ratio=1:15 \
+        --clients=30 \
+        --requests=200000 \
+        --key-prefix=data: \
+        --key-minimum=1 \
+        --key-maximum=10000000 \
+        --key-pattern=R:R \
         $tls_opts"
 
     if [ -n "$cpu_affinity" ]; then

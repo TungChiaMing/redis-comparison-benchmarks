@@ -180,8 +180,8 @@ def plot_ops_chart(all_data, out_filename,
     fig, ax = plt.subplots(figsize=(20, 12))
 
     DBS_WITH_THREADS = [
-        f"Redis io-threads {redis_io_threads}",
-        f"Dragonfly proactor_threads {dragonfly_proactor_threads}"
+        f"Redis",
+        f"Dragonfly"
     ]
 
     for i, db_label in enumerate(DBS_WITH_THREADS):
@@ -194,7 +194,7 @@ def plot_ops_chart(all_data, out_filename,
 
     title_parts = [
         "Redis vs Dragonfly - Memtier Benchmarks",
-        f"(requests:{requests} clients:{clients} data_size:{data_size}B) SET:GET = 1:15"
+        f"requests = {requests} clients = {clients} SET:GET = 1:15"
     ]
     ax.set_title(
         "\n".join(title_parts),

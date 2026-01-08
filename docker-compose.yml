@@ -31,7 +31,6 @@ services:
       - "6390:6390"
     ulimits:
       memlock: -1
-    restart: unless-stopped
 
   dragonfly-tls:
     build:
@@ -44,7 +43,7 @@ services:
     ulimits:
       memlock: -1
     restart: unless-stopped
-    
+
   # keydb:
   #   build:
   #     context: .
